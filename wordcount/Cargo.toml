@@ -5,3 +5,5 @@ authors = ["Amit Aryeh Levy <amit@amitlevy.com>"]
 edition = "2018"
 
 [dependencies]
+memmap = "*"
+num_cpus = "1.0"
