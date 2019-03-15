@@ -9,20 +9,20 @@ use std::time::Instant;
 use memmap::MmapOptions;
 use getopts::Options;
 
-struct WordCount(BTreeMap<String, u32>);
+struct WordCount(BTreeMap<u64, u32>);
 
 impl WordCount {
     fn new() -> Self {
         WordCount(BTreeMap::new())
     }
 
-    fn increment(&mut self, token: String) {
+    fn increment(&mut self, token: u64) {
         *self.0.entry(token).or_insert(0) += 1;
     }
 
     fn merge_from(&mut self, other: &Self) {
       for (word, c) in other.0.iter() {
-          *self.0.entry(word.to_string()).or_insert(0) += c;
+          *self.0.entry(*word).or_insert(0) += c;
       }
     }
 
@@ -34,22 +34,20 @@ impl WordCount {
     }
 
     fn count_file(&mut self, file: &mut Read, buffer_size: usize) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
         let rdr = BufReader::with_capacity(buffer_size, file);
-        for line in rdr.lines() {
-            match line {
-                Ok(line_) => {
-                    for token in line_.split(|c: char| !c.is_alphanumeric()) {
-                        // Filter out multiple spaces delimiting to empty strings.
-                        if token.len() > 0 {
-                            self.increment(token.to_owned());
-                        }
-                    }
+        let mut hasher = DefaultHasher::new();
+        for b in rdr.bytes() {
+            let _ = b.map(|b| {
+                if b >= 97 && b <= 122 || b >= 65 && b <= 90 {
+                    hasher.write_u8(b);
+                } else {
+                  self.increment(hasher.finish());
+                  hasher = DefaultHasher::new();
                 }
-                Err(e) => {
-                    println!("Error reading file: {}", e);
-                    panic!("Error!");
-                }
-            }
+            });
         }
     }
 
