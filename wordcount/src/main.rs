@@ -33,8 +33,8 @@ impl WordCount {
         }
     }
 
-    fn count_file(&mut self, file: &mut Read) {
-        let rdr = BufReader::new(file);
+    fn count_file(&mut self, file: &mut Read, buffer_size: usize) {
+        let rdr = BufReader::with_capacity(buffer_size, file);
         for line in rdr.lines() {
             match line {
                 Ok(line_) => {
@@ -68,6 +68,7 @@ fn main() -> std::io::Result<()> {
     opts.optopt("o", "", "set output file name", "NAME");
     opts.optflag("h", "help", "print this help menu");
     opts.optopt("t", "threads", "set number of threads to use", "NUM_THREADS");
+    opts.optopt("b", "buf", "size of the per-thread buffer in KB", "BUF_SIZE");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => { m }
         Err(f) => { panic!(f.to_string()) }
@@ -91,8 +92,15 @@ fn main() -> std::io::Result<()> {
         _ => num_cpus::get(),
     };
 
+    let match_b: Result<Option<usize>, _> = matches.opt_get("b");
+    let buffer_size = match match_b {
+        Ok(Some(b)) => b,
+        _ => 1,
+    };
+
     println!("Counting words from {} input files", file_names.len());
     println!("Using {} threads", num_threads);
+    println!("Buffer size {}kB", buffer_size);
     let start_time = Instant::now();
 
     let (sender, receiver) = channel();
@@ -106,7 +114,7 @@ fn main() -> std::io::Result<()> {
             println!("{:?}\tStarting thread {}", start_time.elapsed(), i);
             thread::spawn(move || {
                 let mut counts = WordCount::new();
-                counts.count_file(&mut chunks);
+                counts.count_file(&mut chunks, buffer_size * 1024);
                 let _ = s.send(counts);
                 println!("{:?}\tThread {} done", start_time.elapsed(), i);
             });
