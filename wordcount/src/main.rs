@@ -4,8 +4,10 @@ use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::collections::BTreeMap;
 use std::thread;
 use std::sync::mpsc::channel;
+use std::time::Instant;
 
 use memmap::MmapOptions;
+use getopts::Options;
 
 struct WordCount(BTreeMap<String, u32>);
 
@@ -53,34 +55,60 @@ impl WordCount {
 
 }
 
-fn main() -> std::io::Result<()> {
-    let num_cpus = num_cpus::get();
+fn print_usage(program: &str, opts: Options) {
+    let brief = format!("Usage: {} FILE [options]", program);
+    print!("{}", opts.usage(&brief));
+}
 
-    let mut file_names = env::args();
-    if file_names.next().is_none() {
-        println!("wordcount OUTPUT_FILE INPUT_FILE [INPUT_FILEs...]");
-        std::process::exit(1);
-    }
-    let output_file = match file_names.next() {
-        Some(o) => o,
-        None => {
-            println!("wordcount OUTPUT_FILE [INPUT_FILES...]");
-            std::process::exit(1);
-        }
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> =  env::args().collect();
+    let program = args[0].clone();
+
+    let mut opts = Options::new();
+    opts.optopt("o", "", "set output file name", "NAME");
+    opts.optflag("h", "help", "print this help menu");
+    opts.optopt("t", "threads", "set number of threads to use", "NUM_THREADS");
+    let matches = match opts.parse(&args[1..]) {
+        Ok(m) => { m }
+        Err(f) => { panic!(f.to_string()) }
     };
+
+    if matches.opt_present("h") {
+        print_usage(&program, opts);
+        return Ok(())
+    }
+
+    let output_file = matches.opt_str("o").unwrap_or("/dev/stdout".to_string());
+    let file_names = if !matches.free.is_empty() {
+        matches.free.clone()
+    } else {
+        print_usage(&program, opts);
+        return Err(std::io::Error::from_raw_os_error(-1));
+    };
+
+    let num_threads = match matches.opt_get("t") {
+        Ok(Some(t)) => t,
+        _ => num_cpus::get(),
+    };
+
+    println!("Counting words from {} input files", file_names.len());
+    println!("Using {} threads", num_threads);
+    let start_time = Instant::now();
 
     let (sender, receiver) = channel();
     for file_name in file_names {
         let file = fs::File::open(&file_name)?;
         let mapped_file = Box::leak(Box::new(unsafe { MmapOptions::new().map(&file)? }));
-        let chunk_size = mapped_file.len() / num_cpus;
+        let chunk_size = f64::ceil((mapped_file.len() as f64) / (num_threads as f64)) as usize;
 
-        for mut chunks in mapped_file.chunks(chunk_size) {
+        for (i, mut chunks) in mapped_file.chunks(chunk_size).enumerate() {
             let s = sender.clone();
+            println!("{:?}\tStarting thread {}", start_time.elapsed(), i);
             thread::spawn(move || {
                 let mut counts = WordCount::new();
                 counts.count_file(&mut chunks);
                 let _ = s.send(counts);
+                println!("{:?}\tThread {} done", start_time.elapsed(), i);
             });
         }
     }
@@ -93,6 +121,7 @@ fn main() -> std::io::Result<()> {
 
     let mut output = fs::File::create(output_file)?;
     totals.serialize_counts(&mut output);
+    println!("{:?}\tDone", start_time.elapsed());
     Ok(())
 }
 
